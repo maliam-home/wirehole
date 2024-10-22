@@ -1,24 +1,52 @@
-version: "3"
-networks:
-  private_network:
-    ipam:
-      driver: default
-      config:
-        - subnet: 10.2.0.0/24
 services:
+  # https://hub.docker.com/r/mvance/unbound
   unbound:
-    image: mvance/unbound:latest
     container_name: unbound
-    restart: unless-stopped
     hostname: unbound
-    volumes:
-      - ./unbound:/opt/unbound/etc/unbound/
+    image: mvance/unbound:latest
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
     networks:
-      private_network:
-        ipv4_address: 10.2.0.200
+      qnet-vlan0:
+        ipv4_address: "${UNBOUND_IPV4_ADDRESS}"
+    volumes:
+      - ./unbound:/opt/unbound/etc/unbound
+    restart: unless-stopped
     cap_add:
       - NET_ADMIN
     env_file: .env
+
+  # More info at https://github.com/pi-hole/docker-pi-hole/ and https://docs.pi-hole.net/
+  pihole:
+    container_name: pihole
+    hostname: pihole
+    image: pihole/pihole:latest
+    # For DHCP it is recommended to remove these ports and instead add: network_mode: "host"
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "67:67/udp" # Only required if you are using Pi-hole as your DHCP server
+      - "80:80/tcp"
+    networks:
+      qnet-vlan0:
+        ipv4_address: "${PIHOLE_IPV4_ADDRESS}"
+    dns:
+      - "127.0.0.1"
+      - "${PIHOLE_DNS}"
+    env_file: .env
+    volumes:
+      - etc-pihole:/etc/pihole
+      - etc-dnsmasq.d:/etc/dnsmasq.d
+    # secrets:
+    #   - WEBPASSWORD
+    # https://github.com/pi-hole/docker-pi-hole#note-on-capabilities
+    cap_add:
+      - NET_ADMIN # Required if you are using Pi-hole as your DHCP server, else not needed
+    restart: unless-stopped
+    depends_on:
+      - unbound
+
   wireguard:
     depends_on:
       - unbound
@@ -27,7 +55,7 @@ services:
     container_name: wireguard
     ports:
       - 5000:5000
-      - 51820:51820/udp
+      - 51820:51820/ud
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
@@ -55,22 +83,14 @@ services:
       - ./config:/config
     env_file: .env
 
-  pihole:
-    depends_on:
-      - unbound
-    container_name: pihole
-    image: pihole/pihole:latest
-    restart: unless-stopped
-    hostname: pihole
-    dns:
-      - 127.0.0.1
-      - ${PIHOLE_DNS}
-    volumes:
-      - ./etc-pihole/:/etc/pihole/
-      - ./etc-dnsmasq.d/:/etc/dnsmasq.d/
-    cap_add:
-      - NET_ADMIN
-    networks:
-      private_network:
-        ipv4_address: 10.2.0.100
-    env_file: ./.env
+networks:
+  qnet-vlan0:
+    external: true
+
+volumes:
+  etc-pihole:
+  etc-dnsmasq.d:
+
+secrets:
+  WEBPASSWORD:
+    file: /share/Volumes/pihole/.secrets/webpassword.txt
